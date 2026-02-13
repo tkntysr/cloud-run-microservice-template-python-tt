@@ -1,0 +1,183 @@
+name: Deploy Preview to Cloud Run
+
+
+ # 【課題1】トリガーの設定
+      # PRが作られたとき,閉じられた時などにワークフローが動くように、イベントタイプを追加してください
+     
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - synchronize
+      - closed
+     
+
+env:
+  # ※ 演習環境に合わせて値を変更してください
+  PROJECT_ID: ex-ai-training-program
+  GAR_LOCATION: us-central1
+  REPOSITORY: t-takano-20260213
+  SERVICE_BASE: python-microservice
+  REGION: us-central1
+
+jobs:
+  # ===================================================
+  # Job 1: プレビュー環境のデプロイ (Open/Update時)
+  # ===================================================
+  deploy-preview:
+    # PRがClosedの時はこのジョブをスキップしても良い
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+      pull-requests: 'write'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+
+
+
+      # 【課題2】サービス名の生成
+      # 以下の要件で環境変数 SERVICE_NAME を設定するコマンドを記述してください
+      # - 形式: [プレフィックス]-pr-[PR番号]
+      # - ヒント: PR番号は github.event.number で取得できます
+      # - ヒント: GITHUB_ENV への書き込みが必要です
+      - name: Set Service Name
+        run: echo "SERVICE_NAME=${{ env.SERVICE_BASE }}-pr-${{ github.event.number }}" >> $GITHUB_ENV
+
+      # Google Cloud 認証
+      - name: Google Auth
+        id: auth
+        uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: '${{ secrets.WIF_PROVIDER }}'
+          project_id: '${{ env.PROJECT_ID }}'
+
+      # gcloud コマンドのセットアップ
+      - name: Set up Cloud SDK
+        uses: 'google-github-actions/setup-gcloud@v2'
+        with:
+          project_id: '${{ env.PROJECT_ID }}'
+
+      # 【課題3】Cloud Build でのビルド & Push
+      # Cloud Build を使ってコンテナをビルドし、Artifact Registry に Push するコマンドを記述してください
+      # - コマンド: gcloud builds submit
+      # - タグ: ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+      # - ビルドパス: カレントディレクトリ (.)
+      - name: Build and Push via Cloud Build
+        run: |-
+          gcloud builds submit \
+            --tag "${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }}" \
+            --project "${{ env.PROJECT_ID }}" \
+            .
+
+      # 【課題4】Cloud Run へのデプロイ
+      # google-github-actions/deploy-cloudrun@v2 アクションの設定を完成させてください
+      # 必要な設定: service, region, image, tag(PR番号), flags(--allow-unauthenticated)
+      - name: Deploy to Cloud Run
+        uses: 'google-github-actions/deploy-cloudrun@v2'
+        with:
+          service: '${{ env.SERVICE_NAME }}'
+          region: '${{ env.REGION }}'
+          image: '${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }}'
+          tag: '${{ github.event.number }}'
+          flags: '--allow-unauthenticated'
+
+
+
+      # デプロイ完了通知 (ここはそのまま利用)
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const url = '${{ steps.deploy.outputs.url }}';
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `🚀 **Preview Environment Deployed!**\n\nApp is running at: ${url}\n\n(Latest commit: ${context.sha})`
+            })
+
+  # ===================================================
+  # Job 2: プレビュー環境の削除 (Close/Merge時)
+  # ===================================================
+  cleanup-preview:
+    # 【課題5】実行条件の設定
+    # PRが「閉じられた (closed)」時のみ、このジョブが実行される条件式を記述してください
+    if: github.event.action == 'closed'
+    
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+      pull-requests: 'write'
+
+    steps:
+      # Job 1と同様にサービス名を定義 (ここは記入済み)
+      - name: Set Service Name
+        run: echo "SERVICE_NAME=${{ env.SERVICE_BASE }}-pr-${{ github.event.number }}" >> $GITHUB_ENV
+
+      - name: Google Auth
+        uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: '${{ secrets.WIF_PROVIDER }}'
+
+      - name: Set up Cloud SDK
+        uses: 'google-github-actions/setup-gcloud@v2'
+
+      # 【課題6】Cloud Run サービスの削除
+      # デプロイされたプレビュー環境を削除する gcloud コマンドを記述してください
+      # - コマンド: gcloud run services delete
+      # - 対象: 環境変数 SERVICE_NAME
+      # - リージョン: 環境変数 REGION
+      # - 確認プロンプト: スキップするフラグ (--quiet) を必ずつけること
+      - name: Delete Cloud Run Service
+        run: |
+          echo "Deleting service: ${{ env.SERVICE_NAME }}"
+          gcloud run services delete ${{ env.SERVICE_NAME }} \
+            --region ${{ env.REGION }} \
+            --quiet
+
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `🗑️ **Preview Environment Deleted.**\n\nThe Cloud Run service has been cleaned up.`
+            })
+
+
+      # WIF認証
+      - name: Google Auth
+        uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: '${{ secrets.WIF_PROVIDER }}'
+
+      # 【課題5】削除コマンドの記述
+      # - コマンド: gcloud run services delete
+      # - 対象: 環境変数 SERVICE_NAME
+      # - リージョン: 環境変数 REGION
+      # - 確認プロンプト: スキップ (--quiet)
+      - name: Delete Cloud Run Service
+        run: |
+          echo "Deleting service: ${{ env.SERVICE_NAME }}"
+          gcloud run services delete ${{ env.SERVICE_NAME }} \
+            --region ${{ env.REGION }} \
+            --quiet
+
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `🗑️ **Preview Environment Deleted.**\n\nThe Cloud Run service has been cleaned up.`
+            })
