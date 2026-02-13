@@ -140,6 +140,7 @@ jobs:
           echo "Deleting service: ${{ env.SERVICE_NAME }}"
           gcloud run services delete ${{ env.SERVICE_NAME }} \
             --region ${{ env.REGION }} \
+            --project ${{ env.PROJECT_ID }} \
             --quiet
 
       - name: Comment on PR
