@@ -9,17 +9,17 @@ on:
     branches:
       - main
     types:
-      - synchronize
+      - opened
       - closed
      
 
 env:
   # ※ 演習環境に合わせて値を変更してください
   PROJECT_ID: ex-ai-training-program
-  GAR_LOCATION: us-central1
+  GAR_LOCATION: asia-northeast1
   REPOSITORY: t-takano-20260213
-  SERVICE_BASE: python-microservice
-  REGION: us-central1
+  SERVICE_BASE: python-microservice-takano
+  REGION: asia-northeast1
 
 jobs:
   # ===================================================
@@ -27,6 +27,7 @@ jobs:
   # ===================================================
   deploy-preview:
     # PRがClosedの時はこのジョブをスキップしても良い
+    if: github.event.action != 'closed'
     runs-on: ubuntu-latest
     permissions:
       contents: 'read'
@@ -83,7 +84,7 @@ jobs:
           service: '${{ env.SERVICE_NAME }}'
           region: '${{ env.REGION }}'
           image: '${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }}'
-          tag: '${{ github.event.number }}'
+          tag: 'pr-${{ github.event.number }}'
           flags: '--allow-unauthenticated'
 
 
@@ -139,6 +140,7 @@ jobs:
           echo "Deleting service: ${{ env.SERVICE_NAME }}"
           gcloud run services delete ${{ env.SERVICE_NAME }} \
             --region ${{ env.REGION }} \
+            --project ${{ env.PROJECT_ID }} \
             --quiet
 
       - name: Comment on PR
