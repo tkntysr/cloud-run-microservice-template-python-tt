@@ -18,7 +18,7 @@ env:
   PROJECT_ID: ex-ai-training-program
   GAR_LOCATION: asia-northeast1
   REPOSITORY: t-takano-20260213
-  SERVICE_BASE: python-microservice
+  SERVICE_BASE: python-microservice-takano
   REGION: asia-northeast1
 
 jobs:
